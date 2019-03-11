@@ -11,23 +11,39 @@ import os
 
 
 class AiyinsitanSpider(scrapy.Spider):
+
     name = "aiyinsitan"
     json_success_code = "00001"
     startUrl = 'https://www.aiyinsitanfm.com/classify/0%7C78.html'
     img_host = 'https://img.aiyinsitanfm.com'
     mongo_client = MongoClient('mongodb://aiyinsitanFm:mgtj123456@47.101.174.224:27017/aiyinsitan')
+    # 进程名
     pro_name = ''
+    # 运行标识
+    run_name = ''
+    # 爬取id
+    sub_id = ''
+    # 爬取页码，只对分类和专辑列表有效
+    page = 1
+
+    def __init__(self, run_name="", sub_id="", pro_name="", page=1, *args, **kwargs):
+        super(AiyinsitanSpider, self).__init__(*args, **kwargs)
+        self.sub_id = sub_id
+        self.pro_name = pro_name
+        self.run_name = run_name
+        self.page = page
 
     def start_crawl(self):
-        if len(sys.argv) > 3:
-            name = sys.argv[3]
-            pid = os.getpid()
-            if pid > 0:
-                self.pro_name = name
-                f = open("pid_%s" % name, "w")
-                f.write(str(pid))
-                f.close()
-                return True
+        if self.pro_name == "":
+            return False
+
+        pid = os.getpid()
+        if pid > 0:
+            f = open("pid_%s" % self.pro_name, "w")
+            f.write(str(pid))
+            f.close()
+            return True
+
         return False
 
     def closed(self):
@@ -42,10 +58,35 @@ class AiyinsitanSpider(scrapy.Spider):
         # 1113542|1371834 1241|1007772
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
         # yield self.request_album("1241|1007772", "1")
-        if self.start_crawl():
-            yield scrapy.Request(url=self.startUrl, callback=self.parse)
         # yield self.request_all_audio("1113542|1371834")
         # yield self.request_classify("78|1241", "2")
+        # aid = "1241|1007765"
+        # headers = Headers()
+        # headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        # url = "https://www.aiyinsitanfm.com/album/%s.html" % aid
+        # yield scrapy.Request(url=url, callback=self.parse_album_detail, method="GET",
+        #                      headers=headers)
+        if self.start_crawl():
+            if self.run_name == "all":
+                yield scrapy.Request(url=self.startUrl, callback=self.parse)
+            if self.run_name == "classify":
+                # 获取某个分类下所有的专辑和音频数据（页码默认1）
+                yield self.request_classify(self.sub_id, self.page)
+            if self.run_name == "album":
+                # 获取专辑列表+音频数据
+                yield self.request_album_detail(self.sub_id)
+                yield self.request_album(self.sub_id, self.page)
+            if self.run_name == "album_audio":
+                # 获取制定专辑下的音频数据
+                yield self.request_all_audio(self.sub_id)
+
+    def request_album_detail(self, aid):
+        headers = Headers()
+        headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        url = "https://www.aiyinsitanfm.com/album/%s.html" % aid
+        req = scrapy.Request(url=url, callback=self.parse_album_detail, method="GET",
+                             headers=headers)
+        return req
 
     # 入口页解析
     def parse(self, response):
@@ -177,6 +218,40 @@ class AiyinsitanSpider(scrapy.Spider):
                              headers=headers, body="album_id=%s&order_type=1&page_num=%s" % (did, page))
         # print("=============--------album %s---------================" % did)
         return req
+
+    def parse_album_detail(self, response):
+        names = response.xpath('//div[@class="album-content"]/p[@class="album-name"]/text()')
+        authors = response.xpath('//div[@class="album-content"]/p[@class="album-user"]/'
+                                 'span[@class="user-name"]/a/text()')
+        album_id = response.xpath('//div[@class="album-content"]/p[@class="album-action"]/button/@data-id')
+        tags = response.xpath('//div[@class="album-content"]/p[@class="album-tags"]/a')
+        desc = response.xpath('//div[@class="album-content"]/div[@class="album-profile"]'
+                              '/p[@class="profile-text"]/text()')
+
+        m = {"name": "", "author": "", "album_id": "",
+            "tags": "", "desc": "", "album_id_bind": ""}
+        # m = {}
+        m["name"] = str(names.extract_first())
+        m["author"] = authors.extract_first()
+
+        aid = album_id.extract_first()
+        m["album_id_bind"] = aid
+        if aid != "":
+            aids = aid.split("|")
+            if len(aids) == 2:
+                m["album_id"] = aids[1]
+        tgs = ""
+        for t in tags:
+            tgs += str(t.xpath("@data-title").extract_first())+","
+        if tgs != "":
+            tgs = tgs.rstrip(",")
+        m["tags"] = tgs
+        m["desc"] = desc.extract_first()
+
+        my_db = self.mongo_client['aiyinsitan']
+        my_collection = my_db["albums"]
+        my_collection.insert_one(m)
+        return None
 
     # 请求专辑分类列表
     def request_classify(self, tid, page):
