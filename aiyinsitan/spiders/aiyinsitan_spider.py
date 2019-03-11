@@ -16,7 +16,7 @@ class AiyinsitanSpider(scrapy.Spider):
     json_success_code = "00001"
     startUrl = 'https://www.aiyinsitanfm.com/classify/0%7C78.html'
     img_host = 'https://img.aiyinsitanfm.com'
-    mongo_client = MongoClient('mongodb://aiyinsitanFm:mgtj123456@47.101.174.224:27017/aiyinsitan')
+    mongo_client = MongoClient('mongodb://@47.101.174.224:27017/aiyinsitan')
     # 进程名
     pro_name = ''
     # 运行标识
